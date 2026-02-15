@@ -3,15 +3,46 @@ import { pgTable, text, varchar, serial, integer, real, jsonb, timestamp, boolea
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const noteEventSchema = z.object({
+export const drumLabels = [
+  "kick", "snare", "closed_hat", "open_hat", "clap",
+  "tom_low", "tom_mid", "tom_high", "rim", "perc"
+] as const;
+
+export const melodicNoteSchema = z.object({
   id: z.string().optional(),
+  kind: z.literal("melodic").optional(),
   time: z.number(),
   duration: z.number(),
   midi: z.number(),
   velocity: z.number(),
   confidence: z.number(),
   instrument: z.string(),
+  isRest: z.literal(false).optional(),
 });
+
+export const drumNoteSchema = z.object({
+  id: z.string().optional(),
+  kind: z.literal("drum"),
+  drum: z.enum(drumLabels),
+  time: z.number(),
+  duration: z.number(),
+  velocity: z.number(),
+  confidence: z.number(),
+  instrument: z.string(),
+  isRest: z.literal(false).optional(),
+});
+
+export const restEventSchema = z.object({
+  id: z.string().optional(),
+  kind: z.literal("rest"),
+  time: z.number(),
+  duration: z.number(),
+  confidence: z.number(),
+  instrument: z.string(),
+  isRest: z.literal(true),
+});
+
+export const noteEventSchema = z.union([melodicNoteSchema, drumNoteSchema, restEventSchema]);
 
 export type NoteEvent = z.infer<typeof noteEventSchema>;
 
@@ -22,7 +53,7 @@ export const scores = pgTable("scores", {
   bpm: integer("bpm").notNull().default(100),
   timeSignature: text("time_signature").notNull().default("4/4"),
   notes: jsonb("notes").$type<NoteEvent[]>().notNull().default([]),
-  instrument: text("instrument").notNull().default("humming"),
+  instrument: text("instrument").notNull().default("beatbox"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -30,7 +61,7 @@ export const scores = pgTable("scores", {
 export const exports = pgTable("exports", {
   id: serial("id").primaryKey(),
   scoreId: integer("score_id").notNull().references(() => scores.id, { onDelete: "cascade" }),
-  format: text("format").notNull(), // "musicxml" or "midi"
+  format: text("format").notNull(),
   priceCents: integer("price_cents").notNull(),
   stripeSessionId: text("stripe_session_id"),
   paid: boolean("paid").notNull().default(false),

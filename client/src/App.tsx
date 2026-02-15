@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
 import Mobile from "@/pages/Mobile";
 import Desktop from "@/pages/Desktop";
+import CheckoutSuccess from "@/pages/CheckoutSuccess";
 
 function Router() {
   return (
@@ -14,6 +15,7 @@ function Router() {
       <Route path="/" component={Landing} />
       <Route path="/mobile" component={Mobile} />
       <Route path="/desktop" component={Desktop} />
+      <Route path="/checkout/success" component={CheckoutSuccess} />
       <Route component={NotFound} />
     </Switch>
   );

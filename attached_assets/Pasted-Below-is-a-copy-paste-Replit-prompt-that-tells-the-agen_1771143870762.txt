@@ -1,0 +1,204 @@
+Below is a **copy/paste Replit prompt** that tells the agent exactly how to refactor Baseline to be **beatbox-first**, reduce “phantom notes” (the “I played one note but got many” problem), and **insert rests during silence**. It keeps your existing stack, but changes the transcription route to use a **two-stage pipeline**:
+
+1. **Audio DSP gate** (detect drum hits + silence windows)
+2. **AI labeling pass** (OpenAI turns those events into drum notation + confidence)
+
+This avoids letting the model “invent” notes just from noisy audio.
+
+---
+
+```text
+You are working inside my EXISTING full-stack web app repo called “Baseline”.
+
+CONTEXT
+Baseline currently records audio in the browser, sends it to /api/transcribe-notes, converts via ffmpeg to WAV, then uses OpenAI gpt-4o-mini-transcribe and a second gpt-5.2 pass to produce note events that render via VexFlow.
+
+PROBLEM
+Transcription is inaccurate: when I record a single drum/beatbox hit, the system populates multiple notes. It also fails to insert RESTS during dead silence.
+
+GOAL (BEATBOX / DRUMS ONLY FOR NOW)
+Refactor the transcription pipeline to be BEATBOX-FIRST and much more accurate by:
+1) Detecting percussive events (hits) + silence windows with deterministic DSP BEFORE involving AI
+2) Sending ONLY the event timeline to AI for classification + quantization + drum-staff mapping
+3) Inserting RESTS whenever silence exceeds a threshold
+4) Everything else (humming/piano/etc.) should show “Coming soon” and be disabled in UI.
+
+NON-NEGOTIABLE REQUIREMENTS
+- For beatbox/drums input: NEVER hallucinate extra notes. If no clear transient is detected, do NOT emit a note.
+- Must add rests between events where there is dead silence.
+- Output must be deterministic: if I record one hit, I should get ONE drum note (or none) not a cluster.
+- Keep existing UI theme (dark, orange accents) and existing CRUD/export/payment. Only change transcription logic + instrument gating.
+
+TECH STACK (existing)
+Frontend: React 19 + Vite + TS + Tailwind
+Backend: Express 5 + TS
+DB: Postgres (Neon) + Drizzle
+Sheet Music: VexFlow 5
+Playback: Tone.js
+Audio processing: ffmpeg already present
+AI: OpenAI available
+
+WHAT TO BUILD
+
+A) BEATBOX-ONLY INSTRUMENT MODE
+1) In the InstrumentSelector, only “Beatbox (Drums)” is enabled.
+2) All other instrument tiles are visible but disabled and labeled “Coming soon”.
+3) The selected instrument value must be persisted in the score metadata as “beatbox”.
+
+B) NEW TRANSCRIPTION PIPELINE (SERVER)
+Create a new server module: server/lib/drum-transcriber.ts
+
+Pipeline steps:
+1) Convert input blob -> WAV (you already do this with ffmpeg). Enforce:
+   - mono
+   - 44.1k or 48k sample rate
+   - normalized loudness (simple normalization)
+2) Analyze WAV to detect percussive events:
+   - Compute a short-time energy envelope (frame size ~1024 samples, hop ~256)
+   - Compute spectral flux OR a simple transient score (difference between consecutive frames)
+   - Smooth envelope (moving average)
+   - Identify onsets when transient score crosses threshold AND minimum distance between hits is respected (e.g., 80–120ms)
+   - For each onset, estimate:
+     - onset_time_ms
+     - peak_amplitude (0..1)
+     - decay_time_ms (approx; can be short default)
+3) Determine silence windows:
+   - Use RMS energy and a silence threshold (e.g., below -45 dBFS equivalent)
+   - Produce gaps between onsets; if a gap > rest_min_ms (e.g., 200ms), insert one or more REST events.
+4) Quantize to rhythmic grid:
+   - Assume BPM from score settings (default 120)
+   - Determine beat duration = 60_000 / BPM
+   - Quantize onset times to nearest subdivision (default 1/8, allow 1/16 if dense)
+   - Convert durations to notation values: “q”, “8”, “16”, “h”, “w” (and dotted variants if needed)
+5) IMPORTANT: At this stage, do NOT assign drum type yet (kick/snare/hat). Only produce “raw events”.
+
+Define this raw event JSON:
+type RawDrumEvent = {
+  type: "hit" | "rest";
+  tMs: number;          // quantized start time
+  durMs: number;        // quantized duration (rests included)
+  amp: number;          // 0..1 for hits, 0 for rests
+  features?: {          // for hits only
+    centroid?: number;  // optional if you compute it
+    zcr?: number;       // optional
+    bandEnergy?: { low:number; mid:number; high:number };
+  }
+}
+
+C) AI CLASSIFICATION PASS (SERVER)
+Update /api/transcribe-notes to behave differently when instrument=beatbox:
+1) Run drum-transcriber.ts to produce RawDrumEvent[] timeline.
+2) Send ONLY the hit events (plus summary stats) to OpenAI to classify each hit into a drum label:
+   - kick, snare, closed_hat, open_hat, clap, tom_low, tom_mid, tom_high, rim, perc
+3) Do NOT ask OpenAI to “invent” events. It must only label existing hits.
+4) Merge the labels back into a final NoteEvent[] for your existing rendering system.
+
+Define final drum NoteEvent format for Baseline (extend your existing NoteEvent type):
+type DrumNoteEvent = {
+  id: string;
+  kind: "drum";
+  drum: "kick"|"snare"|"closed_hat"|"open_hat"|"clap"|"tom_low"|"tom_mid"|"tom_high"|"rim"|"perc";
+  t: number;          // beats or ms but consistent with your app
+  duration: number;   // beats
+  velocity: number;   // 0..127 from amp
+  confidence: number; // 0..1
+  isRest?: false;
+}
+
+And rests:
+type RestEvent = {
+  id: string;
+  kind: "rest";
+  t: number;
+  duration: number;
+  confidence: 1;
+  isRest: true;
+}
+
+D) PROMPTING RULES FOR THE AI PASS
+Use OpenAI with a strict system prompt:
+- The model receives a list of hit events with their time, amp, and simple features.
+- It must RETURN a JSON array with EXACTLY the same number of labeled hits in the same order.
+- It must NOT add or remove hits.
+- If uncertain, label as “perc” with lower confidence.
+- Confidence must be 0..1.
+
+E) VEXFLOW DRUM NOTATION RENDERING
+Update Staff.tsx rendering logic when score.instrument === "beatbox":
+1) Use a percussion/drum staff (percussion clef) instead of treble clef.
+2) Map drum labels to staff line/space and notehead style (basic mapping is fine):
+   - kick -> bottom space/line (e.g., F)
+   - snare -> middle (e.g., C)
+   - closed_hat -> X notehead above staff
+   - open_hat -> X notehead above staff with open articulation (optional)
+3) Render rests properly using VexFlow rest glyphs for durations.
+4) Ensure measures/bars layout still works.
+
+F) PLAYBACK
+For beatbox mode:
+- Playback should use Tone.js drum samples or simple noise/osc:
+  - kick: sine drop
+  - snare: noise burst
+  - hat: highpassed noise
+- Rests do nothing.
+- Keep highlighting behavior.
+
+G) UI / UX
+- Add a small “Beatbox tips” helper near the record button:
+  - “Record in a quiet room”
+  - “Leave small gaps for rests”
+  - “One hit should yield one note”
+- In the results view, show a small banner with “Beatbox mode (others coming soon)”.
+
+H) TESTS / DEBUGGING
+Add a debug mode behind an env var DEBUG_DRUM_TRANSCRIBE=true that:
+- Logs detected onset times, thresholds, count of hits
+- Returns extra fields in response: rawEvents, detectedHitsCount, insertedRestsCount
+Also add a simple server-side unit test (or script) that feeds a short WAV and asserts:
+- Single transient -> 1 hit
+- Silence > threshold -> rest inserted
+
+FILES TO MODIFY / ADD
+- server/routes.ts: update /api/transcribe-notes to branch by instrument
+- server/lib/drum-transcriber.ts: implement DSP onset detection + silence -> rests + quantization
+- shared/types.ts (or wherever NoteEvent types live): add DrumNoteEvent + RestEvent
+- client/src/components/InstrumentSelector.tsx: beatbox-only + coming soon states
+- client/src/components/Staff.tsx: percussion staff rendering + rests
+- client/src/lib/audio-engine.ts: send instrument setting with transcription request
+- client/src/pages/Mobile.tsx + Desktop.tsx: disable other instruments and show coming soon
+
+DELIVERABLE
+Implement the above changes in the existing Baseline repo. Do not remove existing exports/payments/DB schema; just ensure beatbox transcription produces correct drum notes + rests and stops hallucinating extra notes.
+
+After implementation, explain where I can tune thresholds:
+- onset threshold
+- minimum inter-onset interval
+- silence threshold
+- rest_min_ms
+- quantization subdivision
+```
+
+---
+
+### Why this fixes the “one hit → many notes” problem
+
+Right now, your pipeline asks a model to *infer* musical events from audio. Models can “over-hear” noise, room reverb, or codec artifacts and output multiple events.
+
+This new plan makes the **event count deterministic** first:
+
+* If DSP finds **1 transient**, AI can only label **that 1 event**.
+* Silence becomes measurable → **rests get inserted** automatically.
+
+---
+
+### Quick knobs you’ll be able to tune (in code)
+
+* **onsetThreshold**: higher = fewer false positives
+* **minInterOnsetMs**: prevents double-counting one hit
+* **silenceDb / silenceRmsThreshold**: controls rest detection
+* **restMinMs**: how long silence must be before a rest appears
+* **subdivision** (1/8 vs 1/16): rhythm resolution
+
+---
+
+If you want, I can also give you a **drum-to-staff mapping chart** (kick/snare/hat placements) that matches common drum notation so Baseline outputs look like real drum charts.

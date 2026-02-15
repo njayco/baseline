@@ -1,6 +1,6 @@
 import { type NoteEvent, generateNoteId } from "@/lib/types";
 
-export type Instrument = "humming" | "whistle" | "beatbox" | "piano" | "drums";
+export type Instrument = "beatbox" | "humming" | "whistle" | "piano" | "drums";
 
 type NoteCallback = (note: NoteEvent) => void;
 type TranscriptionCallback = (result: TranscriptionResult) => void;
@@ -73,7 +73,7 @@ export class AudioEngine {
     });
   }
 
-  async transcribe(audioBlob: Blob, instrument: Instrument = "humming", bpm: number = 100): Promise<TranscriptionResult | null> {
+  async transcribe(audioBlob: Blob, instrument: Instrument = "beatbox", bpm: number = 120): Promise<TranscriptionResult | null> {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
       const base64 = btoa(

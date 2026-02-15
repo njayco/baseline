@@ -9,7 +9,10 @@ import { audioEngine, type Instrument } from "@/lib/audio-engine";
 import type { NoteEvent } from "@/lib/types";
 import { ensureNoteIds } from "@/lib/types";
 import { playbackEngine } from "@/lib/playback/player";
+import { ExportPanel } from "@/components/ExportPanel";
+import { NotationColorPicker } from "@/components/NotationColorPicker";
 import { useToast } from "@/hooks/use-toast";
+import { type NotationColors, DEFAULT_NOTATION_COLORS } from "@/lib/types";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
@@ -19,7 +22,7 @@ export default function Mobile() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [notes, setNotes] = useState<NoteEvent[]>([]);
-  const [selectedInstrument, setSelectedInstrument] = useState<Instrument>("humming");
+  const [selectedInstrument, setSelectedInstrument] = useState<Instrument>("beatbox");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [scoreTitle, setScoreTitle] = useState("My Melody");
   const [artistName, setArtistName] = useState("Artist");
@@ -27,6 +30,9 @@ export default function Mobile() {
   const [bpm, setBpm] = useState(100);
   const [activeNoteIds, setActiveNoteIds] = useState<Set<string>>(new Set());
   const [staffWidth, setStaffWidth] = useState(360);
+  const [colorPreset, setColorPreset] = useState("orange");
+  const [notationColors, setNotationColors] = useState<NotationColors>(DEFAULT_NOTATION_COLORS);
+  const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -75,6 +81,7 @@ export default function Mobile() {
       setIsRecording(false);
 
       if (audioBlob && audioBlob.size > 0) {
+        setLastAudioBlob(audioBlob);
         setIsTranscribing(true);
         toast({ title: "Processing your melody..." });
 
@@ -102,7 +109,7 @@ export default function Mobile() {
     }
   };
 
-  const saveScore = async (currentNotes: NoteEvent[]) => {
+  const saveScore = async (currentNotes: NoteEvent[]): Promise<number | null> => {
     try {
       if (scoreId) {
         await fetch(`/api/scores/${scoreId}`, {
@@ -110,6 +117,7 @@ export default function Mobile() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ notes: currentNotes, title: scoreTitle, artist: artistName, bpm, instrument: selectedInstrument }),
         });
+        return scoreId;
       } else {
         const res = await fetch("/api/scores", {
           method: "POST",
@@ -118,9 +126,11 @@ export default function Mobile() {
         });
         const score = await res.json();
         setScoreId(score.id);
+        return score.id;
       }
     } catch (err) {
       console.error("Save failed:", err);
+      return null;
     }
   };
 
@@ -132,6 +142,7 @@ export default function Mobile() {
     setElapsedTime(0);
     setScoreId(null);
     setActiveNoteIds(new Set());
+    setLastAudioBlob(null);
   };
 
   return (
@@ -180,6 +191,14 @@ export default function Mobile() {
                   data-testid="input-artist-name"
                 />
               </div>
+              <div className="space-y-2 pt-2 border-t border-border/30">
+                <Label data-testid="label-notation-colors">Notation Colors</Label>
+                <NotationColorPicker
+                  value={colorPreset}
+                  onChange={(key, colors) => { setColorPreset(key); setNotationColors(colors); }}
+                  variant="horizontal"
+                />
+              </div>
             </div>
           </SheetContent>
         </Sheet>
@@ -190,6 +209,9 @@ export default function Mobile() {
         className="flex-1 overflow-y-auto p-4 bg-grid-pattern relative"
       >
         <div className="text-center mb-2">
+          <div className="inline-flex items-center gap-1.5 bg-primary/10 border border-primary/20 rounded-full px-3 py-1 mb-2">
+            <span className="text-[10px] text-primary font-semibold uppercase tracking-wider" data-testid="badge-beatbox-mode">Beatbox Mode</span>
+          </div>
           <p className="text-[10px] text-muted-foreground/50 uppercase tracking-[0.3em] mb-1" data-testid="label-generated-sheet">Generated Sheet Music</p>
           <h3 className="text-lg font-bold text-foreground" data-testid="text-score-title">{scoreTitle}</h3>
           <p className="text-xs text-muted-foreground" data-testid="text-artist-name">{artistName}</p>
@@ -204,11 +226,11 @@ export default function Mobile() {
         ) : notes.length === 0 ? (
           <div className="text-center text-muted-foreground/30 animate-pulse py-12">
             <p className="font-display text-2xl">TAP RECORD</p>
-            <p className="text-sm">Sing or hum a melody</p>
+            <p className="text-sm">Make some beats!</p>
           </div>
         ) : (
           <div className="w-full">
-            <Staff notes={notes} mode="mobile" width={staffWidth} activeNoteIds={activeNoteIds} />
+            <Staff notes={notes} mode="mobile" width={staffWidth} activeNoteIds={activeNoteIds} instrument={selectedInstrument} colors={notationColors} />
           </div>
         )}
          
@@ -260,6 +282,17 @@ export default function Mobile() {
                </Button>
             </div>
 
+            <div className="bg-primary/5 border border-primary/10 rounded-lg p-2 text-center">
+              <p className="text-[10px] text-primary/70 font-semibold uppercase tracking-wider mb-1">Beatbox Tips</p>
+              <div className="flex justify-center gap-3 text-[9px] text-muted-foreground/60">
+                <span>Quiet room</span>
+                <span>|</span>
+                <span>Gaps for rests</span>
+                <span>|</span>
+                <span>1 hit = 1 note</span>
+              </div>
+            </div>
+
             <div className="bg-background/50 rounded-xl p-2">
                <p className="text-xs text-center text-muted-foreground mb-2 uppercase tracking-wider font-semibold">Select Input</p>
                <InstrumentSelector 
@@ -269,6 +302,8 @@ export default function Mobile() {
                />
             </div>
           </div>
+
+          <ExportPanel notes={notes} scoreId={scoreId} onSaveScore={saveScore} variant="mobile" scoreTitle={scoreTitle} artistName={artistName} audioBlob={lastAudioBlob} />
       </div>
     </div>
   );

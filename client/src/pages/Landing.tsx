@@ -47,7 +47,7 @@ export default function Landing() {
       </div>
       
       <div className="absolute bottom-8 text-center text-xs text-muted-foreground/50">
-        <p>Mockup Prototype v0.1</p>
+        <p>An Unrevealed Brand by UV Music Group</p>
       </div>
     </div>
   );

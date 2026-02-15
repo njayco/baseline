@@ -1,5 +1,5 @@
 import * as Tone from "tone";
-import { type NoteEvent } from "@/lib/types";
+import { type NoteEvent, isDrumNote, isRestEvent, isMelodicNote } from "@/lib/types";
 
 export type PlaybackState = "stopped" | "playing" | "paused";
 
@@ -18,7 +18,10 @@ class PlaybackEngine {
   private state: PlaybackState = "stopped";
   private timeUpdateCallbacks: TimeUpdateCallback[] = [];
   private stateChangeCallbacks: StateChangeCallback[] = [];
-  private synth: Tone.PolySynth | null = null;
+  private melodicSynth: Tone.PolySynth | null = null;
+  private kickSynth: Tone.MembraneSynth | null = null;
+  private snareSynth: Tone.NoiseSynth | null = null;
+  private hatSynth: Tone.NoiseSynth | null = null;
   private scheduledEvents: number[] = [];
   private startTime = 0;
   private pausedAt = 0;
@@ -52,42 +55,127 @@ class PlaybackEngine {
     this.stateChangeCallbacks.forEach(cb => cb(state));
   }
 
-  private ensureSynth(): Tone.PolySynth {
-    if (!this.synth) {
-      this.synth = new Tone.PolySynth(Tone.Synth, {
+  private ensureMelodicSynth(): Tone.PolySynth {
+    if (!this.melodicSynth) {
+      this.melodicSynth = new Tone.PolySynth(Tone.Synth, {
         oscillator: { type: "triangle" },
         envelope: { attack: 0.02, decay: 0.1, sustain: 0.3, release: 0.3 },
       }).toDestination();
-      this.synth.volume.value = -6;
+      this.melodicSynth.volume.value = -6;
     }
-    return this.synth;
+    return this.melodicSynth;
+  }
+
+  private ensureKickSynth(): Tone.MembraneSynth {
+    if (!this.kickSynth) {
+      this.kickSynth = new Tone.MembraneSynth({
+        pitchDecay: 0.05,
+        octaves: 6,
+        oscillator: { type: "sine" },
+        envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 },
+      }).toDestination();
+      this.kickSynth.volume.value = -4;
+    }
+    return this.kickSynth;
+  }
+
+  private ensureSnareSynth(): Tone.NoiseSynth {
+    if (!this.snareSynth) {
+      this.snareSynth = new Tone.NoiseSynth({
+        noise: { type: "white" },
+        envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.05 },
+      }).toDestination();
+      this.snareSynth.volume.value = -10;
+    }
+    return this.snareSynth;
+  }
+
+  private ensureHatSynth(): Tone.NoiseSynth {
+    if (!this.hatSynth) {
+      const filter = new Tone.Filter(8000, "highpass").toDestination();
+      this.hatSynth = new Tone.NoiseSynth({
+        noise: { type: "white" },
+        envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.03 },
+      }).connect(filter);
+      this.hatSynth.volume.value = -14;
+    }
+    return this.hatSynth;
+  }
+
+  private playDrumHit(drum: string, time: number, velocity: number) {
+    switch (drum) {
+      case "kick":
+        this.ensureKickSynth().triggerAttackRelease("C1", "8n", time, velocity);
+        break;
+      case "snare":
+      case "clap":
+      case "rim":
+        this.ensureSnareSynth().triggerAttackRelease("8n", time);
+        break;
+      case "closed_hat":
+      case "open_hat":
+        this.ensureHatSynth().triggerAttackRelease(drum === "open_hat" ? "4n" : "16n", time);
+        break;
+      case "tom_low":
+        this.ensureKickSynth().triggerAttackRelease("G1", "8n", time, velocity);
+        break;
+      case "tom_mid":
+        this.ensureKickSynth().triggerAttackRelease("C2", "8n", time, velocity);
+        break;
+      case "tom_high":
+        this.ensureKickSynth().triggerAttackRelease("E2", "8n", time, velocity);
+        break;
+      default:
+        this.ensureSnareSynth().triggerAttackRelease("16n", time);
+        break;
+    }
   }
 
   async play(notes: NoteEvent[], fromTime: number = 0) {
     if (this.state === "playing") return;
 
     await Tone.start();
-    const synth = this.ensureSynth();
 
     this.notes = notes;
-    const sorted = [...notes].sort((a, b) => a.time - b.time);
-    if (sorted.length === 0) return;
+    const playableNotes = notes.filter(n => !isRestEvent(n));
+    const sorted = [...playableNotes].sort((a, b) => a.time - b.time);
+    if (sorted.length === 0 && notes.length === 0) return;
 
-    const lastNote = sorted[sorted.length - 1];
-    this.totalDuration = lastNote.time + lastNote.duration;
+    const allSorted = [...notes].sort((a, b) => a.time - b.time);
+    const lastEvent = allSorted[allSorted.length - 1];
+    this.totalDuration = lastEvent ? lastEvent.time + lastEvent.duration : 0;
 
     Tone.getTransport().cancel();
     this.scheduledEvents = [];
 
+    const usedTimes = new Map<string, number>();
+
     for (const note of sorted) {
-      const noteTime = note.time - fromTime;
+      let noteTime = note.time - fromTime;
       if (noteTime < 0) continue;
 
-      const eventId = Tone.getTransport().schedule((time) => {
-        const noteName = MIDI_TO_NOTE[note.midi] || "C4";
-        synth.triggerAttackRelease(noteName, note.duration, time, note.velocity * 0.8);
-      }, noteTime);
-      this.scheduledEvents.push(eventId);
+      const synthKey = isDrumNote(note) ? note.drum : "melodic";
+      const timeKey = `${synthKey}_${noteTime.toFixed(6)}`;
+      if (usedTimes.has(timeKey)) {
+        noteTime += 0.001 * (usedTimes.get(timeKey)! + 1);
+      }
+      usedTimes.set(timeKey, (usedTimes.get(timeKey) || 0) + 1);
+
+      if (noteTime < 0) noteTime = 0;
+
+      if (isDrumNote(note)) {
+        const eventId = Tone.getTransport().schedule((time) => {
+          this.playDrumHit(note.drum, time, note.velocity * 0.8);
+        }, noteTime);
+        this.scheduledEvents.push(eventId);
+      } else if (isMelodicNote(note)) {
+        const synth = this.ensureMelodicSynth();
+        const eventId = Tone.getTransport().schedule((time) => {
+          const noteName = MIDI_TO_NOTE[note.midi] || "C4";
+          synth.triggerAttackRelease(noteName, note.duration, time, note.velocity * 0.8);
+        }, noteTime);
+        this.scheduledEvents.push(eventId);
+      }
     }
 
     const endEventId = Tone.getTransport().schedule(() => {
@@ -162,6 +250,7 @@ class PlaybackEngine {
   getActiveNoteIds(notes: NoteEvent[], currentTime: number): Set<string> {
     const active = new Set<string>();
     for (const note of notes) {
+      if (isRestEvent(note)) continue;
       if (currentTime >= note.time && currentTime < note.time + note.duration) {
         active.add(note.id);
       }
@@ -171,10 +260,10 @@ class PlaybackEngine {
 
   dispose() {
     this.stop();
-    if (this.synth) {
-      this.synth.dispose();
-      this.synth = null;
-    }
+    if (this.melodicSynth) { this.melodicSynth.dispose(); this.melodicSynth = null; }
+    if (this.kickSynth) { this.kickSynth.dispose(); this.kickSynth = null; }
+    if (this.snareSynth) { this.snareSynth.dispose(); this.snareSynth = null; }
+    if (this.hatSynth) { this.hatSynth.dispose(); this.hatSynth = null; }
   }
 }
 
