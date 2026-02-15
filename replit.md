@@ -4,6 +4,12 @@
 Baseline is a web application that converts recorded melodies (humming, whistling, beatbox, etc.) into professional sheet music notation. Features a dark theme with vibrant orange accents (#FF6600), offers both mobile and desktop editor modes, and uses a "free to create, pay to export" business model.
 
 ## Recent Changes
+- 2026-02-15: Added playback controls (Play/Pause, Stop, Replay) via Tone.js on both mobile and desktop
+- 2026-02-15: Added real-time note highlighting during playback (active notes glow #FF6600)
+- 2026-02-15: Added stable `id` field to NoteEvent for reliable note tracking
+- 2026-02-15: Removed "Tabla" from instrument input sources
+- 2026-02-15: Fixed mobile sheet music scrolling (vertical measure wrapping, sticky controls)
+- 2026-02-15: Added "Generated Sheet Music" label above staff on both modes
 - 2026-02-15: Set up PostgreSQL database with scores, exports, conversations, messages tables
 - 2026-02-15: Built backend API routes for score CRUD, audio transcription, MusicXML/MIDI export
 - 2026-02-15: Integrated OpenAI (via Replit AI Integrations) for audio-to-notes transcription
@@ -25,9 +31,11 @@ Baseline is a web application that converts recorded melodies (humming, whistlin
 - `client/src/pages/Mobile.tsx` - Mobile recording interface
 - `client/src/pages/Desktop.tsx` - Desktop DAW-style editor with sidebar controls
 - `client/src/components/Staff.tsx` - VexFlow-based sheet music renderer
-- `client/src/components/InstrumentSelector.tsx` - Input source selector (humming, whistle, beatbox, etc.)
+- `client/src/components/InstrumentSelector.tsx` - Input source selector (humming, whistle, beatbox, piano, drums)
+- `client/src/components/TransportControls.tsx` - Playback transport (Play/Pause, Stop, Replay)
 - `client/src/lib/audio-engine.ts` - Real audio recording via MediaRecorder + API transcription
-- `client/src/lib/types.ts` - Frontend type definitions (NoteEvent, ScoreState)
+- `client/src/lib/playback/player.ts` - Tone.js playback engine with note scheduling and time tracking
+- `client/src/lib/types.ts` - Frontend type definitions (NoteEvent with id, ScoreState with title/artist)
 
 ### Backend (Express)
 - `server/index.ts` - Express server setup

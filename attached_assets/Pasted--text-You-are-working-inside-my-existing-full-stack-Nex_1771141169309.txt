@@ -1,0 +1,134 @@
+```text
+You are working inside my existing full-stack Next.js (App Router) + TypeScript repo called “Baseline”.
+
+TASK
+Implement playback controls + synced note-highlighting, improve sheet music scrolling on mobile, remove “Tabla” as an input source everywhere, and add title/artist metadata editing on mobile that is reflected on the rendered sheet AND on exported files.
+
+DO NOT redesign the whole app. Make focused changes only.
+
+REQUIREMENTS (MAKE THESE CHANGES)
+
+1) PLAYBACK CONTROLS (MOBILE + DESKTOP)
+Add transport controls that work on BOTH /mobile and /desktop:
+- Play / Pause toggle
+- Stop (resets playback to start)
+- Replay (jump to start then play)
+Playback must use the current NoteEvents list and the chosen playback instrument.
+
+SYNC NOTE HIGHLIGHTING DURING PLAYBACK
+- While playback runs, the currently playing note must be highlighted on the sheet music in real time.
+- Highlight behavior:
+  - The active note should visually stand out (e.g., orange fill or orange outline).
+  - Previously played notes return to normal style.
+  - If multiple notes overlap, highlight all notes whose (time <= t < time+duration).
+- This synced highlighting must work on both mobile and desktop.
+
+IMPLEMENTATION APPROACH (IMPORTANT)
+- Use a shared player module (e.g., lib/playback/player.ts) that:
+  - schedules notes (Tone.js or existing playback engine)
+  - maintains a playback clock (transport time)
+  - emits “playbackTime” updates (e.g., requestAnimationFrame at ~30–60 fps OR Tone.Transport ‘ticks’)
+  - exposes events/callbacks:
+    - onTimeUpdate(currentTimeSec)
+    - onStateChange(playing/paused/stopped)
+- Sheet rendering modules (VexFlow/OSMD) must accept “activeNoteIds” or “activeNoteIndices” and re-render only what’s needed.
+  - If your renderer can’t partially update, do a lightweight re-render (but avoid jank).
+
+Add a stable ID to each NoteEvent if missing:
+- id: string
+so we can map note highlight reliably.
+
+2) REMOVE “TABLA” INPUT SOURCE EVERYWHERE
+- Remove “Tabla” from the instrument input selector lists on:
+  - /mobile
+  - /desktop
+- Make sure no code paths assume Tabla exists (types/enums/defaults).
+
+3) CLEARLY INDICATE WHAT THE USER IS SEEING
+Add a small label near the staff on both versions:
+- “Generated Sheet Music”
+And for clarity in UI:
+- On mobile: label above staff.
+- On desktop: label above the paper canvas.
+
+4) MOBILE SHEET MUSIC IS CUT OFF — FIX SCROLLING / LAYOUT
+Currently mobile staff gets cut off after notes generate.
+Fix it so sheet music can continue vertically and be scrollable.
+
+MOBILE SPEC
+- The staff area must support a growing “page” vertically.
+- When notes exceed the current visible area, append new measures beneath (vertical layout).
+- Add a scroll container:
+  - It must allow vertical scrolling on full-screen mobile.
+  - Provide a visible scrollbar where supported.
+- Keep the Record/Transport controls “sticky” at the bottom so controls remain accessible while scrolling the sheet.
+
+Implementation suggestion:
+- Wrap the staff renderer in a div with:
+  - height: calc(100vh - header - controls)
+  - overflow-y: auto
+- Render measures stacked vertically (not a single horizontal row).
+If your current renderer only renders horizontally:
+- Implement a simple pagination/line-break:
+  - After N measures (based on container width), wrap to the next “system” line beneath.
+  - Continue adding new systems downward.
+
+5) MOBILE: ADD TITLE + ARTIST TEXTBOXES (METADATA)
+Add a small form on /mobile:
+- Title of Melody (text input)
+- Artist Name (text input)
+
+Behavior:
+- Defaults can be blank or “Untitled” / “Unknown Artist”
+- As user types, update the state immediately.
+- The title + artist must be shown on the rendered sheet music (top area above the first staff):
+  - Title centered
+  - Artist name aligned right (or beneath title if easier)
+- This metadata MUST be included in exports:
+  - MusicXML should include title/composer fields
+  - PDF export (if present) should visually show title/artist
+  - If MIDI export exists, include track name as “Title – Artist” (best-effort)
+
+NOTE: Keep desktop metadata editing optional for now. If it already exists, keep it. If not, just ensure desktop displays whatever metadata is stored in shared score state (so mobile edits still show up if the same score is opened there).
+
+STATE MANAGEMENT
+- Add/extend a shared “Score” state object:
+  {
+    title: string,
+    artist: string,
+    bpm: number,
+    timeSignature: string,
+    notes: NoteEvent[]
+  }
+- Ensure exports read from this object.
+
+FILES / AREAS TO UPDATE (GUIDANCE)
+- components/TransportControls.tsx
+- lib/playback/tonePlayer.ts (or create lib/playback/player.ts)
+- components/StaffMobile.tsx
+- components/StaffDesktop.tsx
+- components/InstrumentSelect.tsx
+- lib/music/musicxml.ts (add title/artist to output)
+- app/mobile/page.tsx (add inputs + scroll container)
+- app/desktop/page.tsx (wire transport + highlighting + remove Tabla)
+
+ACCEPTANCE TESTS
+1) I can record a melody, then tap Play and hear it back.
+2) While it plays, the currently sounding note is highlighted on the sheet (mobile + desktop).
+3) Stop resets playback to start. Replay restarts and plays.
+4) “Tabla” is nowhere in the input source selector.
+5) Mobile sheet music does NOT cut off; it continues vertically and scrolls, while controls remain accessible.
+6) Title and Artist fields on mobile update the rendered sheet and appear in exported MusicXML/PDF (and track name for MIDI if supported).
+
+IMPLEMENT IN SMALL, SAFE CHANGES
+- Don’t break recording.
+- Don’t change the existing AI note generation pipeline.
+- Just add playback controls + highlighting, scrolling layout, metadata, and remove Tabla.
+
+When finished, provide brief notes in the README:
+- How to use playback controls
+- Where title/artist metadata is stored
+- Any known limitations
+```
+
+If you want, I can also write a **tight little highlight algorithm** (time → active notes) that’s optimized so VexFlow doesn’t re-render the whole page every frame (it’ll feel way smoother on iPhone).

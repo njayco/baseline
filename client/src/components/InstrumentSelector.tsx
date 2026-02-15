@@ -12,9 +12,8 @@ interface InstrumentSelectorProps {
 
 const INSTRUMENTS = [
   { id: "humming", label: "Humming", icon: Mic },
-  { id: "whistle", label: "Whistle", icon: Circle }, // Placeholder icons
+  { id: "whistle", label: "Whistle", icon: Circle },
   { id: "beatbox", label: "Beatbox", icon: Square },
-  { id: "tabla", label: "Tabla", icon: Circle },
   { id: "piano", label: "Piano", icon: Square },
   { id: "drums", label: "Drums", icon: Circle },
 ];

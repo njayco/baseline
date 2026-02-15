@@ -10,7 +10,7 @@ Baseline is a web application that converts recorded melodies — humming, whist
 
 ### Audio Recording & AI Transcription
 - Record melodies directly in the browser using the device microphone via the MediaRecorder API
-- Supports multiple input sources: humming, whistling, beatbox, tabla, piano, and drums
+- Supports multiple input sources: humming, whistling, beatbox, piano, and drums
 - Audio is sent to the backend, converted to a compatible format using ffmpeg, and transcribed via OpenAI's `gpt-4o-mini-transcribe` model
 - A second AI pass with `gpt-5.2` converts the transcription into structured musical note events (MIDI values, timing, velocity, confidence)
 
@@ -53,6 +53,7 @@ Baseline is a web application that converts recorded melodies — humming, whist
 | UI Components | Radix UI primitives, shadcn/ui, Lucide icons |
 | Routing | Wouter |
 | Sheet Music | VexFlow 5 |
+| Playback | Tone.js |
 | Backend | Express 5, TypeScript (tsx) |
 | Database | PostgreSQL (Neon) via Drizzle ORM |
 | AI | OpenAI (gpt-4o-mini-transcribe, gpt-5.2) |
@@ -73,9 +74,12 @@ Baseline is a web application that converts recorded melodies — humming, whist
 │   │   │   └── Desktop.tsx          # Desktop DAW-style editor
 │   │   ├── components/
 │   │   │   ├── Staff.tsx            # VexFlow sheet music renderer
-│   │   │   └── InstrumentSelector.tsx # Input source picker
+│   │   │   ├── InstrumentSelector.tsx # Input source picker
+│   │   │   └── TransportControls.tsx  # Playback transport (Play/Pause, Stop, Replay)
 │   │   └── lib/
 │   │       ├── audio-engine.ts      # MediaRecorder + API transcription
+│   │       ├── playback/
+│   │       │   └── player.ts        # Tone.js playback engine with note scheduling
 │   │       └── types.ts             # Frontend type definitions
 │   └── index.html
 ├── server/
@@ -146,6 +150,29 @@ Chat and AI conversation history tables for future features.
 5. **Save**: Scores auto-save to PostgreSQL with all metadata. Users can edit the title and artist name at any time.
 
 6. **Export**: Clicking an export button creates a Stripe Checkout session. After payment, the server generates the requested format (MusicXML or MIDI) and serves it as a file download. Payment is verified by checking the export record, Stripe session status, and session ownership before generating the file.
+
+---
+
+## Playback Controls
+
+Both mobile and desktop modes include transport controls for playing back recorded melodies:
+
+- **Play / Pause**: Starts playback of the current notes using a synthesizer (Tone.js). Press again to pause.
+- **Stop**: Stops playback and resets to the beginning.
+- **Replay**: Jumps to the start and immediately begins playing.
+
+During playback, the currently sounding note is highlighted in bright orange (#FF6600) on the sheet music in real time. Previously played notes return to their normal style. This highlighting works on both mobile and desktop.
+
+### Title & Artist Metadata
+
+- On **mobile**, tap the settings gear icon to edit the score title and artist name. These fields are shown above the staff and are included in all exports (MusicXML title/composer, MIDI track name).
+- On **desktop**, title and artist fields are in the sidebar under "Score Info".
+
+### Known Limitations
+
+- Playback uses a simple triangle-wave synth; it does not replicate the original recording's timbre.
+- Note IDs are generated client-side. Scores saved before the ID update may lack IDs until re-transcribed.
+- Playback highlights notes based on timing data from the AI transcription, which may not perfectly match perceived rhythm.
 
 ---
 

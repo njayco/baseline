@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Mic, ArrowLeft, Settings2, Share2, Undo2, Loader2 } from "lucide-react";
+import { Mic, ArrowLeft, Settings2, Undo2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Staff } from "@/components/Staff";
 import { InstrumentSelector } from "@/components/InstrumentSelector";
+import { TransportControls } from "@/components/TransportControls";
 import { audioEngine, type Instrument } from "@/lib/audio-engine";
 import type { NoteEvent } from "@/lib/types";
+import { ensureNoteIds } from "@/lib/types";
+import { playbackEngine } from "@/lib/playback/player";
 import { useToast } from "@/hooks/use-toast";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -22,7 +25,17 @@ export default function Mobile() {
   const [artistName, setArtistName] = useState("Artist");
   const [scoreId, setScoreId] = useState<number | null>(null);
   const [bpm, setBpm] = useState(100);
+  const [activeNoteIds, setActiveNoteIds] = useState<Set<string>>(new Set());
+  const [staffWidth, setStaffWidth] = useState(360);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const updateWidth = () => setStaffWidth(window.innerWidth - 32);
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
 
   useEffect(() => {
     let interval: number;
@@ -37,10 +50,24 @@ export default function Mobile() {
 
   useEffect(() => {
     const cleanup = audioEngine.onNote((note) => {
-      setNotes(prev => [...prev, note]);
+      setNotes(prev => ensureNoteIds([...prev, note]));
     });
     return cleanup;
   }, []);
+
+  useEffect(() => {
+    const unsub = playbackEngine.onTimeUpdate((time) => {
+      const active = playbackEngine.getActiveNoteIds(notes, time);
+      setActiveNoteIds(active);
+    });
+    return unsub;
+  }, [notes]);
+
+  useEffect(() => {
+    if (scrollRef.current && notes.length > 0) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [notes]);
 
   const toggleRecording = async () => {
     if (isRecording) {
@@ -57,12 +84,15 @@ export default function Mobile() {
         if (result && result.notes.length > 0) {
           if (result.bpm) setBpm(result.bpm);
           toast({ title: `Detected ${result.notes.length} notes!` });
-          await saveScore([...notes, ...result.notes]);
+          const merged = ensureNoteIds([...notes, ...result.notes]);
+          setNotes(merged);
+          await saveScore(merged);
         } else {
           toast({ title: "No notes detected", description: "Try singing or humming louder", variant: "destructive" });
         }
       }
     } else {
+      playbackEngine.stop();
       const started = await audioEngine.startRecording();
       if (started) {
         setIsRecording(true);
@@ -97,14 +127,16 @@ export default function Mobile() {
   const clearSession = () => {
     setIsRecording(false);
     audioEngine.stopRecording();
+    playbackEngine.stop();
     setNotes([]);
     setElapsedTime(0);
     setScoreId(null);
+    setActiveNoteIds(new Set());
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col font-sans">
-      <header className="flex items-center justify-between p-4 border-b border-border/40 bg-background/80 backdrop-blur-md sticky top-0 z-50">
+    <div className="h-screen bg-background flex flex-col font-sans overflow-hidden">
+      <header className="flex items-center justify-between p-4 border-b border-border/40 bg-background/80 backdrop-blur-md sticky top-0 z-50 shrink-0">
         <Link href="/">
           <Button variant="ghost" size="icon" className="-ml-2 text-muted-foreground" data-testid="button-back">
             <ArrowLeft className="h-6 w-6" />
@@ -129,7 +161,7 @@ export default function Mobile() {
             </SheetHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="mobile-title">Score Name</Label>
+                <Label htmlFor="mobile-title">Title of Melody</Label>
                 <Input 
                   id="mobile-title" 
                   value={scoreTitle} 
@@ -153,85 +185,91 @@ export default function Mobile() {
         </Sheet>
       </header>
 
-      <main className="flex-1 flex flex-col relative overflow-hidden">
-        <div className="flex-1 flex items-center justify-center p-4 bg-grid-pattern relative">
-           <div className="absolute top-4 left-0 right-0 text-center opacity-50 z-10 pointer-events-none">
-              <h3 className="text-lg font-bold text-foreground" data-testid="text-score-title">{scoreTitle}</h3>
-              <p className="text-xs text-muted-foreground" data-testid="text-artist-name">{artistName}</p>
-           </div>
-
-           {isTranscribing ? (
-             <div className="text-center text-primary animate-pulse">
-               <Loader2 className="h-12 w-12 mx-auto animate-spin mb-4" />
-               <p className="font-display text-xl">TRANSCRIBING...</p>
-               <p className="text-sm text-muted-foreground">AI is converting your audio to notes</p>
-             </div>
-           ) : notes.length === 0 ? (
-             <div className="text-center text-muted-foreground/30 animate-pulse">
-               <p className="font-display text-2xl">TAP RECORD</p>
-               <p className="text-sm">Sing or hum a melody</p>
-             </div>
-           ) : (
-             <div className="w-full overflow-x-auto">
-               <Staff notes={notes} mode="mobile" width={window.innerWidth - 32} />
-             </div>
-           )}
-           
-           {isRecording && (
-             <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-primary/10 to-transparent flex items-end justify-center gap-1 pb-2">
-               {[...Array(20)].map((_, i) => (
-                 <div 
-                   key={i} 
-                   className="w-1 bg-primary/50 rounded-full animate-pulse"
-                   style={{ 
-                     height: `${Math.random() * 100}%`,
-                     animationDuration: `${0.2 + Math.random() * 0.5}s`
-                   }} 
-                 />
-               ))}
-             </div>
-           )}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-4 bg-grid-pattern relative"
+      >
+        <div className="text-center mb-2">
+          <p className="text-[10px] text-muted-foreground/50 uppercase tracking-[0.3em] mb-1" data-testid="label-generated-sheet">Generated Sheet Music</p>
+          <h3 className="text-lg font-bold text-foreground" data-testid="text-score-title">{scoreTitle}</h3>
+          <p className="text-xs text-muted-foreground" data-testid="text-artist-name">{artistName}</p>
         </div>
 
-        <div className="bg-card border-t border-border/50 pb-8 rounded-t-3xl shadow-2xl relative z-20">
-            <div className="absolute -top-10 left-1/2 -translate-x-1/2">
-              <Button 
-                size="lg"
-                className={cn(
-                  "h-20 w-20 rounded-full border-4 border-background shadow-xl transition-all duration-300 flex items-center justify-center",
-                  isRecording 
-                    ? "bg-destructive text-destructive-foreground animate-pulse hover:bg-destructive/90" 
-                    : "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105"
-                )}
-                onClick={toggleRecording}
-                disabled={isTranscribing}
-                data-testid="button-record-main"
-              >
-                 {isTranscribing ? <Loader2 className="h-8 w-8 animate-spin" /> : isRecording ? <div className="h-6 w-6 bg-current rounded-sm" /> : <Mic className="h-8 w-8" />}
-              </Button>
+        {isTranscribing ? (
+          <div className="text-center text-primary animate-pulse py-12">
+            <Loader2 className="h-12 w-12 mx-auto animate-spin mb-4" />
+            <p className="font-display text-xl">TRANSCRIBING...</p>
+            <p className="text-sm text-muted-foreground">AI is converting your audio to notes</p>
+          </div>
+        ) : notes.length === 0 ? (
+          <div className="text-center text-muted-foreground/30 animate-pulse py-12">
+            <p className="font-display text-2xl">TAP RECORD</p>
+            <p className="text-sm">Sing or hum a melody</p>
+          </div>
+        ) : (
+          <div className="w-full">
+            <Staff notes={notes} mode="mobile" width={staffWidth} activeNoteIds={activeNoteIds} />
+          </div>
+        )}
+         
+        {isRecording && (
+          <div className="h-16 bg-gradient-to-t from-primary/10 to-transparent flex items-end justify-center gap-1 pb-2 mt-4">
+            {[...Array(20)].map((_, i) => (
+              <div 
+                key={i} 
+                className="w-1 bg-primary/50 rounded-full animate-pulse"
+                style={{ 
+                  height: `${Math.random() * 100}%`,
+                  animationDuration: `${0.2 + Math.random() * 0.5}s`
+                }} 
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-card border-t border-border/50 pb-6 pt-4 rounded-t-3xl shadow-2xl relative z-20 shrink-0">
+          <div className="px-4 space-y-3">
+            <div className="flex justify-center">
+              <div className="flex items-center gap-4">
+                <Button 
+                  size="lg"
+                  className={cn(
+                    "h-16 w-16 rounded-full border-4 border-background shadow-xl transition-all duration-300 flex items-center justify-center",
+                    isRecording 
+                      ? "bg-destructive text-destructive-foreground animate-pulse hover:bg-destructive/90" 
+                      : "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105"
+                  )}
+                  onClick={toggleRecording}
+                  disabled={isTranscribing}
+                  data-testid="button-record-main"
+                >
+                   {isTranscribing ? <Loader2 className="h-8 w-8 animate-spin" /> : isRecording ? <div className="h-6 w-6 bg-current rounded-sm" /> : <Mic className="h-8 w-8" />}
+                </Button>
+              </div>
             </div>
 
-            <div className="pt-14 px-4 space-y-4">
-              <div className="flex justify-between items-center px-4">
-                 <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setNotes(n => n.slice(0, -1))} data-testid="button-undo">
-                   <Undo2 className="h-4 w-4 mr-2" /> Undo
-                 </Button>
-                 <Button variant="ghost" size="sm" className="text-destructive" onClick={clearSession} data-testid="button-clear">
-                   Clear
-                 </Button>
-              </div>
+            <TransportControls notes={notes} onClear={clearSession} variant="full" />
 
-              <div className="bg-background/50 rounded-xl p-2">
-                 <p className="text-xs text-center text-muted-foreground mb-2 uppercase tracking-wider font-semibold">Select Input</p>
-                 <InstrumentSelector 
-                   value={selectedInstrument} 
-                   onChange={(v) => setSelectedInstrument(v as Instrument)} 
-                   className="grid-cols-3 gap-1 p-0"
-                 />
-              </div>
+            <div className="flex justify-between items-center px-4">
+               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setNotes(n => n.slice(0, -1))} data-testid="button-undo">
+                 <Undo2 className="h-4 w-4 mr-2" /> Undo
+               </Button>
+               <Button variant="ghost" size="sm" className="text-destructive" onClick={clearSession} data-testid="button-clear">
+                 Clear
+               </Button>
             </div>
-        </div>
-      </main>
+
+            <div className="bg-background/50 rounded-xl p-2">
+               <p className="text-xs text-center text-muted-foreground mb-2 uppercase tracking-wider font-semibold">Select Input</p>
+               <InstrumentSelector 
+                 value={selectedInstrument} 
+                 onChange={(v) => setSelectedInstrument(v as Instrument)} 
+                 className="grid-cols-3 gap-1 p-0"
+               />
+            </div>
+          </div>
+      </div>
     </div>
   );
 }

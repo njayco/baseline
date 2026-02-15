@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { 
-  ArrowLeft, Mic, Save, Download, Play, Pause, 
-  Settings, Music, Clock, Sliders, Loader2, Undo2, Trash2
+  ArrowLeft, Mic, Save, Download,
+  Settings, Music, Clock, Loader2, Undo2, Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -10,7 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { Staff } from "@/components/Staff";
 import { audioEngine, type Instrument } from "@/lib/audio-engine";
 import type { NoteEvent } from "@/lib/types";
+import { ensureNoteIds } from "@/lib/types";
 import { InstrumentSelector } from "@/components/InstrumentSelector";
+import { TransportControls } from "@/components/TransportControls";
+import { playbackEngine } from "@/lib/playback/player";
 import { useToast } from "@/hooks/use-toast";
 
 import { Input } from "@/components/ui/input";
@@ -27,11 +30,12 @@ export default function Desktop() {
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument>("humming");
   const [scoreId, setScoreId] = useState<number | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [activeNoteIds, setActiveNoteIds] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   useEffect(() => {
     const cleanup = audioEngine.onNote((note) => {
-      setNotes(prev => [...prev, note]);
+      setNotes(prev => ensureNoteIds([...prev, note]));
       const scrollContainer = document.getElementById("score-container");
       if (scrollContainer) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -39,6 +43,14 @@ export default function Desktop() {
     });
     return cleanup;
   }, []);
+
+  useEffect(() => {
+    const unsub = playbackEngine.onTimeUpdate((time) => {
+      const active = playbackEngine.getActiveNoteIds(notes, time);
+      setActiveNoteIds(active);
+    });
+    return unsub;
+  }, [notes]);
 
   const toggleRecording = async () => {
     if (isRecording) {
@@ -55,12 +67,15 @@ export default function Desktop() {
         if (result && result.notes.length > 0) {
           if (result.bpm) setBpm([result.bpm]);
           toast({ title: `Detected ${result.notes.length} notes!` });
-          await saveScore([...notes, ...result.notes]);
+          const merged = ensureNoteIds([...notes, ...result.notes]);
+          setNotes(merged);
+          await saveScore(merged);
         } else {
           toast({ title: "No notes detected", description: "Try singing or humming louder", variant: "destructive" });
         }
       }
     } else {
+      playbackEngine.stop();
       const started = await audioEngine.startRecording();
       if (started) {
         setIsRecording(true);
@@ -130,8 +145,10 @@ export default function Desktop() {
   const clearSession = () => {
     setIsRecording(false);
     audioEngine.stopRecording();
+    playbackEngine.stop();
     setNotes([]);
     setScoreId(null);
+    setActiveNoteIds(new Set());
   };
 
   return (
@@ -161,6 +178,7 @@ export default function Desktop() {
                    ) : isRecording ? "STOP RECORDING" : "RECORD"}
                  </Button>
                </div>
+               <TransportControls notes={notes} variant="compact" className="justify-center pt-1" />
              </div>
 
              <div className="space-y-4 pt-4 border-t border-border/50">
@@ -272,13 +290,14 @@ export default function Desktop() {
              <div className="absolute inset-0 paper-texture opacity-40 pointer-events-none mix-blend-multiply" />
              
              <div className="relative z-10">
+               <p className="text-center text-xs text-black/30 uppercase tracking-[0.3em] mb-4 font-sans" data-testid="label-generated-sheet">Generated Sheet Music</p>
                <h2 className="text-center font-serif text-3xl text-black/80 mb-2" data-testid="text-score-title">{scoreTitle || "Untitled Score"}</h2>
                <p className="text-center font-sans text-xs text-black/40 mb-12 uppercase tracking-widest" data-testid="text-artist-name">
                  Transcribed by {artistName || "Baseline User"}
                </p>
                
                <div className="text-black">
-                  <Staff notes={notes} mode="desktop" width={700} />
+                  <Staff notes={notes} mode="desktop" width={700} activeNoteIds={activeNoteIds} />
                </div>
 
                {notes.length === 0 && !isTranscribing && (

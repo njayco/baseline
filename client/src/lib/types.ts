@@ -1,4 +1,5 @@
 export interface NoteEvent {
+  id: string;        // unique stable ID for highlighting
   time: number;      // seconds from start
   duration: number;  // seconds
   midi: number;      // MIDI pitch (60 = C4)
@@ -8,7 +9,18 @@ export interface NoteEvent {
 }
 
 export interface ScoreState {
+  title: string;
+  artist: string;
   bpm: number;
   timeSignature: string;
   notes: NoteEvent[];
+}
+
+let _noteIdCounter = 0;
+export function generateNoteId(): string {
+  return `note_${Date.now()}_${_noteIdCounter++}`;
+}
+
+export function ensureNoteIds(notes: NoteEvent[]): NoteEvent[] {
+  return notes.map(n => n.id ? n : { ...n, id: generateNoteId() });
 }

@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const noteEventSchema = z.object({
+  id: z.string().optional(),
   time: z.number(),
   duration: z.number(),
   midi: z.number(),

@@ -1,6 +1,6 @@
-import { type NoteEvent } from "@/lib/types";
+import { type NoteEvent, generateNoteId } from "@/lib/types";
 
-export type Instrument = "humming" | "whistle" | "beatbox" | "tabla" | "piano" | "drums";
+export type Instrument = "humming" | "whistle" | "beatbox" | "piano" | "drums";
 
 type NoteCallback = (note: NoteEvent) => void;
 type TranscriptionCallback = (result: TranscriptionResult) => void;
@@ -93,6 +93,7 @@ export class AudioEngine {
       const result: TranscriptionResult = await response.json();
 
       result.notes.forEach(note => {
+        if (!note.id) note.id = generateNoteId();
         note.instrument = instrument;
         this.notifyListeners(note);
       });
