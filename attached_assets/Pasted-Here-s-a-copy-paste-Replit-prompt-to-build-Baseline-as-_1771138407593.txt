@@ -1,0 +1,192 @@
+Here’s a **copy/paste Replit prompt** to build **Baseline** as a web app that feels like your screenshot: **record → AI converts to sheet music in real time → staff updates live → playback with virtual instruments**, plus a **desktop “power user” mode** where the sheet **scrolls downward** as it fills.
+
+---
+
+```text
+You are working inside a NEW full-stack repo called “Baseline”.
+
+BUILD
+Create “Baseline” — a web app (mobile + desktop) that turns a recorded melody (humming/voice or selected instrument) into sheet music in near real-time using the OpenAI API, and lets users play it back with virtual instruments.
+
+CORE IDEA
+- User records a melody (mic input).
+- App converts audio → structured notes (pitch + onset/duration) → sheet music.
+- Sheet music appears while recording (live).
+- Playback uses virtual instruments (piano, bass, drums, etc).
+- Mobile web version: simple, fast, “record + live staff”.
+- Desktop power version: larger editor, continuous recording, vertical scrolling sheet as it fills, editing + quantize, export.
+
+TECH STACK (use these defaults)
+- Next.js (App Router) + TypeScript
+- Tailwind CSS
+- Web Audio API for microphone capture
+- VexFlow (or OSMD/OpenSheetMusicDisplay) for rendering music notation in the browser
+- Tone.js for synth + sampler playback
+- OpenAI API for audio→notes conversion
+- A lightweight server layer using Next.js route handlers (/app/api/*)
+
+IMPORTANT: REALTIME FEEL
+Use OpenAI’s Realtime API (WebRTC preferred) to stream audio chunks and request incremental note events so the staff updates while recording.
+Fallback: If Realtime is not available, do chunked uploads every 1–2 seconds to an HTTP endpoint that calls OpenAI and returns note events.
+
+ENV VARS
+- OPENAI_API_KEY=...
+(Provide a .env.example)
+
+DATA MODEL
+Represent music as a simple JSON “NoteEvent” list:
+- time (seconds from start)
+- duration (seconds)
+- midi (integer)
+- velocity (0–1)
+- confidence (0–1)
+- instrument (string)
+Also keep tempo + timeSignature:
+- bpm (default 100)
+- timeSignature (default 4/4)
+
+MVP PAGES / ROUTES
+1) / (Landing)
+- Brand: “BASELINE”
+- Two big buttons:
+  - “Open Mobile”
+  - “Open Desktop (Power)”
+- Auto-detect screen width: if small, suggest Mobile; if large, suggest Desktop.
+
+2) /mobile
+MOBILE UI MUST FEEL LIKE THE SCREENSHOT
+- Dark theme, orange accents
+- Top: BASLINE logo text + small timer
+- Center: a staff with notes appearing live
+- Bottom: big Record button (mic) + instrument selector button
+- Instrument options:
+  - Humming (default)
+  - Whistle
+  - Beatbox
+  - Tabla
+  - Piano
+  - Drums
+- While recording:
+  - staff updates every ~250–500ms when new notes arrive
+  - show waveform strip (optional)
+- Playback:
+  - play/pause
+  - choose virtual instrument for playback
+- Simple controls:
+  - “Undo last bar”
+  - “Clear”
+
+3) /desktop
+DESKTOP POWER USER MODE
+- Left panel:
+  - Record / Stop
+  - Instrument select (input mode)
+  - Tempo (BPM) control
+  - Quantize strength (off/light/medium/hard)
+  - Metronome toggle
+  - Playback instrument select
+  - Export buttons: MusicXML + MIDI (at least MusicXML for MVP)
+- Main canvas:
+  - A sheet music “paper” area (white/very light) with staff lines
+  - As recording continues, the sheet should SCROLL DOWN automatically as new measures are appended.
+  - Users can click a note to select it and nudge pitch up/down, and adjust duration (basic editing).
+- Optional: timeline minimap on the right.
+
+AI / AUDIO → NOTES PIPELINE (must implement)
+Goal: convert raw mic audio into NoteEvents and keep a running score.
+
+A) CLIENT AUDIO CAPTURE
+- Use Web Audio API getUserMedia
+- Record mono audio, 16kHz or 24kHz if practical
+- Maintain a rolling buffer while recording
+- Display recording timer
+
+B) REALTIME MODE (preferred)
+- Create a server endpoint /api/realtime/session that mints a short-lived session token for the browser (do not expose OPENAI_API_KEY to client).
+- In the browser, connect via WebRTC to OpenAI Realtime API using the ephemeral token.
+- Stream mic audio frames continuously.
+- After every small interval (e.g., each 1–2 seconds), request the model to return incremental note events as STRICT JSON matching:
+{
+  "bpm": number,
+  "timeSignature": "4/4",
+  "notes": [ { "time": 0.0, "duration": 0.5, "midi": 60, "velocity": 0.8, "confidence": 0.9 } ... ],
+  "final": boolean
+}
+- Append returned notes to the current score, dedupe overlaps, and re-render staff.
+
+C) FALLBACK MODE (chunked HTTP)
+- If WebRTC Realtime fails, record in 1–2 second chunks
+- POST each chunk to /api/transcribe-notes
+- Server calls OpenAI with audio input and returns the same JSON schema
+- Client appends notes and updates staff
+
+D) QUANTIZATION + MUSICAL CLEANUP
+On the client:
+- Estimate bpm if AI returns it; otherwise allow default bpm.
+- Quantize note start times/durations to nearest 1/8 by default, adjustable on desktop.
+- Merge notes that are very close in pitch/time.
+- Clamp durations to avoid zero/negative.
+- Keep confidence; optionally gray low-confidence notes.
+
+SHEET MUSIC RENDERING
+- Use VexFlow (preferred) to render measures and notes.
+- Mobile: render horizontally and keep the newest measure visible (auto-pan).
+- Desktop: render vertically like a sheet; as measures add, the paper grows and scrolls down.
+- Support treble clef for MVP; if midi < 55 optionally route to bass clef later (nice-to-have).
+
+PLAYBACK
+- Convert NoteEvents → Tone.js schedule
+- Provide at least:
+  - Piano (Tone.Sampler or PolySynth)
+  - Bass (simple synth)
+  - Drums (basic kit)
+- Play/pause, loop selection (optional)
+- Sync playback cursor highlight on staff (desktop nice-to-have; MVP can skip highlight)
+
+EXPORT
+- MusicXML export (MVP)
+  - Build a simple MusicXML generator from measures + pitches + durations.
+- MIDI export (nice-to-have if time)
+
+STATE / STORAGE
+- Keep current session in-memory in the browser
+- Add “Save Project” later; for MVP add “Download JSON” to export the NoteEvents
+
+SECURITY / SERVER
+- NEVER expose OPENAI_API_KEY to the browser
+- All OpenAI calls go through server routes
+- Add basic rate limiting per IP (lightweight)
+
+FILES TO CREATE (suggested)
+- app/page.tsx (landing)
+- app/mobile/page.tsx
+- app/desktop/page.tsx
+- app/api/realtime/session/route.ts (ephemeral token)
+- app/api/transcribe-notes/route.ts (fallback chunk upload)
+- lib/music/quantize.ts
+- lib/music/musicxml.ts
+- lib/music/vexflowRender.ts
+- lib/audio/mic.ts
+- lib/playback/tonePlayer.ts
+- components/StaffMobile.tsx
+- components/StaffDesktop.tsx
+- components/TransportControls.tsx
+- components/InstrumentSelect.tsx
+
+UI STYLE
+- Dark gradients + orange accents for Mobile (match screenshot vibe)
+- Desktop uses clean “paper” sheet area + dark chrome around it
+- Typography: bold “BASELINE” header
+
+ACCEPTANCE TESTS
+- On mobile, I can tap record, hum a short melody, and see notes appear on staff within ~1–3 seconds and continue updating.
+- I can stop, press play, and hear a synthesized playback matching the melody contour.
+- On desktop, recording adds measures continuously and the sheet auto-scrolls DOWN as it fills.
+- Export MusicXML produces a downloadable file.
+
+If any OpenAI Realtime specifics are missing, implement the fallback chunked HTTP path first so the MVP still works.
+```
+
+---
+
+If you want, I can also write a **second Replit prompt** that’s *only* for the **Realtime/WebRTC plumbing** (ephemeral token route + client WebRTC + streaming audio + parsing incremental JSON note events), so you can paste it after the MVP is running and upgrade it to true live mode.
